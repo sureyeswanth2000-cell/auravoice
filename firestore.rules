@@ -3,37 +3,57 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ── User Profiles ────────────────────────────────────────────────────────
-    // Each user can only read/write their OWN document
     match /users/{userId} {
       allow read:  if request.auth != null;
       allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && request.auth.uid == userId
-                    && request.resource.data.uid == userId; // cannot change uid
-      allow delete: if false; // accounts are never deleted from client
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if false;
+
+      // ── Following subcollection ──────────────────────────────────────────
+      match /following/{followedUid} {
+        allow read:   if request.auth != null;
+        allow write:  if request.auth != null && request.auth.uid == userId;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // ── Direct Message Chats ─────────────────────────────────────────────────
+    // chatId = sorted UIDs joined by "_"
+    match /chats/{chatId} {
+      // Only participants can read/write the chat document
+      allow read:   if request.auth != null
+                    && resource.data.participants.hasAny([request.auth.uid]);
+      allow create: if request.auth != null
+                    && request.resource.data.participants.hasAny([request.auth.uid]);
+      allow update: if request.auth != null
+                    && resource.data.participants.hasAny([request.auth.uid]);
+      allow delete: if false;
+
+      // ── Chat messages subcollection ───────────────────────────────────────
+      match /messages/{msgId} {
+        allow read:   if request.auth != null;
+        allow create: if request.auth != null
+                      && request.resource.data.sender == request.auth.uid
+                      && request.resource.data.text.size() <= 1000;
+        allow update, delete: if false;
+      }
     }
 
     // ── Voice Rooms ──────────────────────────────────────────────────────────
     match /frnd_rooms/{roomId} {
-      // Anyone logged in can read rooms
       allow read: if request.auth != null;
-
-      // Only verified phone users (non-anonymous) can CREATE a room
       allow create: if request.auth != null
-                    && request.auth.token.firebase.sign_in_provider != 'anonymous'
                     && request.resource.data.keys().hasAll(['title', 'host', 'hostUid', 'createdAt'])
                     && request.resource.data.hostUid == request.auth.uid;
-
-      // Only the room HOST can update or delete the room
       allow update, delete: if request.auth != null
                              && resource.data.hostUid == request.auth.uid;
 
-      // ── Room Messages ──────────────────────────────────────────────────────
       match /messages/{messageId} {
         allow read:   if request.auth != null;
         allow create: if request.auth != null
                       && request.resource.data.keys().hasAll(['sender', 'text', 'createdAt'])
-                      && request.resource.data.text.size() <= 500; // 500 char limit
-        allow update, delete: if false; // messages are immutable
+                      && request.resource.data.text.size() <= 500;
+        allow update, delete: if false;
       }
     }
 
@@ -42,9 +62,9 @@ service cloud.firestore {
       allow read:   if request.auth != null;
       allow create: if request.auth != null
                     && request.resource.data.uid == request.auth.uid;
-      allow update: if request.auth != null; // pairing logic needs cross-doc update
+      allow update: if request.auth != null;
       allow delete: if request.auth != null
-                    && resource.data.uid == request.auth.uid; // own entry only
+                    && resource.data.uid == request.auth.uid;
     }
 
     // ── Active Match Calls ───────────────────────────────────────────────────
@@ -52,7 +72,7 @@ service cloud.firestore {
       allow read:   if request.auth != null;
       allow create: if request.auth != null;
       allow update: if request.auth != null;
-      allow delete: if request.auth != null; // both users can clean up
+      allow delete: if request.auth != null;
     }
   }
 }

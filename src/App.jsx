@@ -4,18 +4,21 @@ import { auth, db, getMessagingInstance } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, onSnapshot, addDoc, orderBy, query } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
-import { Home as HomeIcon, MessageSquare, Phone, BookOpen, User, Wallet, Bell, Users, CheckSquare, Gift, LogOut, Search, Plus, Flag, Sparkles, Heart } from 'lucide-react';
+import { Home as HomeIcon, MessageSquare, Phone, BookOpen, User, Wallet, Bell, Users, CheckSquare, Gift, LogOut, Search, Plus, Flag, Sparkles, Heart, Trophy, Video } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Analytics } from './analytics';
 
 // Lazy-load heavy components for code splitting (reduces initial bundle)
-const AvatarCreator = lazy(() => import('./components/avatarCreator'));
-const VoiceRoom     = lazy(() => import('./components/voiceRoom'));
-const Games         = lazy(() => import('./components/games'));
-const Matchmaker    = lazy(() => import('./components/matchmaker'));
-const LoveSkool     = lazy(() => import('./components/loveSkool'));
-const Login         = lazy(() => import('./components/login'));
-const Friends       = lazy(() => import('./components/friends'));
+const AvatarCreator    = lazy(() => import('./components/avatarCreator'));
+const VoiceRoom        = lazy(() => import('./components/voiceRoom'));
+const Games            = lazy(() => import('./components/games'));
+const Matchmaker       = lazy(() => import('./components/matchmaker'));
+const LoveSkool        = lazy(() => import('./components/loveSkool'));
+const Login            = lazy(() => import('./components/login'));
+const Friends          = lazy(() => import('./components/friends'));
+const DirectMessages   = lazy(() => import('./components/directMessages'));
+const Leaderboard      = lazy(() => import('./components/leaderboard'));
+const VideoCall        = lazy(() => import('./components/videoCall'));
 
 // Loading fallback spinner
 const Spinner = () => (
@@ -27,8 +30,11 @@ const Spinner = () => (
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loadingSession, setLoadingSession] = useState(true);
-  const [activeTab, setActiveTab] = useState('home'); // 'home', 'rooms', 'matchmaker', 'loveskool', 'profile', 'friends'
-  const [showNotifPrompt, setShowNotifPrompt] = useState(false); // FCM permission prompt
+  // tabs: 'home' | 'rooms' | 'matchmaker' | 'messages' | 'leaderboard' | 'friends' | 'profile'
+  const [activeTab, setActiveTab] = useState('home');
+  const [showNotifPrompt, setShowNotifPrompt] = useState(false);
+  // Video call state
+  const [activeVideoCall, setActiveVideoCall] = useState(null); // { chatId, peerName, peerPhoto, peerUid }
   
   // Real Firestore synced states
   const [coins, setCoins] = useState(100);
@@ -602,6 +608,17 @@ export default function App() {
             {activeTab === 'friends' && (
               <Friends userProfile={userProfile} />
             )}
+
+            {activeTab === 'messages' && (
+              <DirectMessages
+                userProfile={userProfile}
+                onStartVideoCall={(peer) => setActiveVideoCall(peer)}
+              />
+            )}
+
+            {activeTab === 'leaderboard' && (
+              <Leaderboard userProfile={userProfile} />
+            )}
           </>
         )}
         </Suspense>
@@ -623,13 +640,17 @@ export default function App() {
             <Phone size={20} />
             <span>Match</span>
           </div>
-          <div onClick={() => setActiveTab('friends')} className={`nav-item ${activeTab === 'friends' ? 'active' : ''}`}>
-            <Heart size={20} />
-            <span>Friends</span>
+          <div onClick={() => setActiveTab('messages')} className={`nav-item ${activeTab === 'messages' ? 'active' : ''}`}>
+            <MessageSquare size={20} />
+            <span>DMs</span>
+          </div>
+          <div onClick={() => setActiveTab('leaderboard')} className={`nav-item ${activeTab === 'leaderboard' ? 'active' : ''}`}>
+            <Trophy size={20} />
+            <span>Ranks</span>
           </div>
           <div onClick={() => setActiveTab('profile')} className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`}>
             <User size={20} />
-            <span>Avatar</span>
+            <span>Me</span>
           </div>
         </nav>
       )}
@@ -825,6 +846,21 @@ export default function App() {
             </div>
           </div>
         </>
+      )}
+      {/* ── Video Call Overlay ── */}
+      {activeVideoCall && (
+        <Suspense fallback={
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#060412', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: '48px', height: '48px', border: '4px solid rgba(139,60,255,0.2)', borderTopColor: 'var(--secondary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          </div>
+        }>
+          <VideoCall
+            channelName={`video-${activeVideoCall.chatId || activeVideoCall.peerUid || 'call'}`}
+            peer={activeVideoCall}
+            userProfile={userProfile}
+            onEnd={() => setActiveVideoCall(null)}
+          />
+        </Suspense>
       )}
 
     </div>
