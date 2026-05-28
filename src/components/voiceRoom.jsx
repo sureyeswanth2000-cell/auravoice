@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { joinVoiceChannel, leaveVoiceChannel, setLocalMicMute } from '../agora';
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
-import { Mic, MicOff, Users, Send, Gift, Flag, UserX } from 'lucide-react';
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { Mic, MicOff, Users, Send, Gift, Flag, UserX, UserPlus, UserCheck } from 'lucide-react';
 import { renderAvatarSVG } from './mockData';
 import confetti from 'canvas-confetti';
+import { Analytics } from '../analytics';
 
 const GIFTS = [
   { id: 'gift-rose',  name: 'Rose',        emoji: '🌹', cost: 10  },
@@ -26,6 +27,8 @@ export default function VoiceRoom({ room, userProfile, coins, setCoins, onBack, 
   const [reportOpen, setReportOpen]   = useState(false);
   const [reportSent, setReportSent]   = useState(false);
   const [listenerCount, setListenerCount] = useState(1);
+  const [isFollowingHost, setIsFollowingHost] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
 
   const chatEndRef  = useRef(null);
   const roomSpeakers = room.speakers || [];
@@ -43,6 +46,43 @@ export default function VoiceRoom({ room, userProfile, coins, setCoins, onBack, 
     start();
     return () => { leaveVoiceChannel(); };
   }, [room.id]);
+
+  // ── Check if already following host ─────────────────────────────────────
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !room.hostUid) return;
+    const followRef = doc(db, 'users', currentUser.uid, 'following', room.hostUid);
+    getDoc(followRef).then(snap => setIsFollowingHost(snap.exists())).catch(() => {});
+  }, [room.hostUid]);
+
+  // ── Follow / Unfollow host ───────────────────────────────────────────────
+  const handleFollowHost = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !room.hostUid) return;
+    // Can't follow yourself
+    if (currentUser.uid === room.hostUid) return;
+
+    setFollowLoading(true);
+    const followRef = doc(db, 'users', currentUser.uid, 'following', room.hostUid);
+    try {
+      if (isFollowingHost) {
+        await deleteDoc(followRef);
+        setIsFollowingHost(false);
+      } else {
+        await setDoc(followRef, {
+          name: room.host?.name || 'AuraVoice Host',
+          followedAt: Date.now(),
+        });
+        setIsFollowingHost(true);
+        Analytics.followedHost(room.host?.name || 'Unknown');
+        confetti({ particleCount: 30, spread: 50, origin: { y: 0.5 } });
+      }
+    } catch (e) {
+      console.warn('Follow/unfollow failed:', e);
+    } finally {
+      setFollowLoading(false);
+    }
+  };
 
   // ── Real-time Firestore chat ──────────────────────────────────────────────
   useEffect(() => {
@@ -195,6 +235,30 @@ export default function VoiceRoom({ room, userProfile, coins, setCoins, onBack, 
             <div style={{ position: 'absolute', top: '-10px', background: 'var(--accent)', color: '#000', fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '99px' }}>HOST RJ</div>
           </div>
           <span style={{ fontWeight: '700', fontSize: '14px', marginTop: '8px' }}>{room.host.name} 🎧</span>
+          {/* Follow Host Button */}
+          {auth.currentUser?.uid !== room.hostUid && (
+            <button
+              onClick={handleFollowHost}
+              disabled={followLoading}
+              style={{
+                marginTop: '6px',
+                padding: '6px 14px',
+                borderRadius: '20px',
+                border: isFollowingHost ? '1px solid rgba(0,230,118,0.4)' : '1px solid rgba(255,46,147,0.4)',
+                background: isFollowingHost ? 'rgba(0,230,118,0.1)' : 'rgba(255,46,147,0.1)',
+                color: isFollowingHost ? '#00e676' : 'var(--primary)',
+                fontSize: '11px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {isFollowingHost ? <><UserCheck size={12} /> Following</> : <><UserPlus size={12} /> Follow Host</>}
+            </button>
+          )}
         </div>
 
         {/* Lower seats */}

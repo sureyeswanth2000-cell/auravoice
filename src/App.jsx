@@ -1,21 +1,34 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { renderAvatarSVG } from './components/mockData';
-import AvatarCreator from './components/avatarCreator';
-import VoiceRoom from './components/voiceRoom';
-import Games from './components/games';
-import Matchmaker from './components/matchmaker';
-import LoveSkool from './components/loveSkool';
-import Login from './components/login';
-import { auth, db } from './firebase';
+import { auth, db, getMessagingInstance } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, onSnapshot, addDoc, orderBy, query } from 'firebase/firestore';
-import { Home as HomeIcon, MessageSquare, Phone, BookOpen, User, Wallet, Bell, Users, CheckSquare, Gift, LogOut, Search, Plus, Flag, Sparkles } from 'lucide-react';
+import { getToken } from 'firebase/messaging';
+import { Home as HomeIcon, MessageSquare, Phone, BookOpen, User, Wallet, Bell, Users, CheckSquare, Gift, LogOut, Search, Plus, Flag, Sparkles, Heart } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { Analytics } from './analytics';
+
+// Lazy-load heavy components for code splitting (reduces initial bundle)
+const AvatarCreator = lazy(() => import('./components/avatarCreator'));
+const VoiceRoom     = lazy(() => import('./components/voiceRoom'));
+const Games         = lazy(() => import('./components/games'));
+const Matchmaker    = lazy(() => import('./components/matchmaker'));
+const LoveSkool     = lazy(() => import('./components/loveSkool'));
+const Login         = lazy(() => import('./components/login'));
+const Friends       = lazy(() => import('./components/friends'));
+
+// Loading fallback spinner
+const Spinner = () => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 20px' }}>
+    <div style={{ width: '36px', height: '36px', border: '3px solid rgba(255,46,147,0.2)', borderTopColor: '#ff2e93', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+  </div>
+);
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loadingSession, setLoadingSession] = useState(true);
-  const [activeTab, setActiveTab] = useState('home'); // 'home', 'rooms', 'matchmaker', 'loveskool', 'profile'
+  const [activeTab, setActiveTab] = useState('home'); // 'home', 'rooms', 'matchmaker', 'loveskool', 'profile', 'friends'
+  const [showNotifPrompt, setShowNotifPrompt] = useState(false); // FCM permission prompt
   
   // Real Firestore synced states
   const [coins, setCoins] = useState(100);
@@ -70,6 +83,11 @@ export default function App() {
       if (firebaseUser) {
         setIsLoggedIn(true);
         await syncUserProfile(firebaseUser);
+        Analytics.loginSuccess(firebaseUser.phoneNumber ? 'phone' : 'anonymous');
+        // Show notification prompt after 3 seconds
+        setTimeout(() => setShowNotifPrompt(true), 3000);
+        // Register FCM token in background
+        registerFcmToken(firebaseUser.uid);
       } else {
         setIsLoggedIn(false);
         setLoadingSession(false);
@@ -88,6 +106,35 @@ export default function App() {
     }, () => {}); // silently ignore permission errors before auth
     return () => unsub();
   }, []);
+
+  // 3. Register FCM push notification token
+  const registerFcmToken = async (uid) => {
+    try {
+      const messaging = await getMessagingInstance();
+      if (!messaging) return;
+      const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY;
+      if (!vapidKey) return; // skip if not configured
+      const token = await getToken(messaging, { vapidKey });
+      if (token) {
+        await updateDoc(doc(db, 'users', uid), { fcmToken: token }).catch(() => {});
+      }
+    } catch (e) {
+      // FCM silently fails (e.g. permission denied or unsupported browser)
+    }
+  };
+
+  // 4. Handle notification permission grant
+  const handleEnableNotifications = async () => {
+    setShowNotifPrompt(false);
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      const currentUser = auth.currentUser;
+      if (currentUser) registerFcmToken(currentUser.uid);
+      Analytics.notificationEnabled();
+      setNotification('🔔 Notifications enabled! You\'ll get alerts when friends go live.');
+      setTimeout(() => setNotification(''), 4000);
+    }
+  };
 
   // 2. Fetch or initialize User Firestore Document
   const syncUserProfile = async (firebaseUser) => {
@@ -160,6 +207,7 @@ export default function App() {
     setLastClaimedDate(todayStr);
     setWalletOpen(false);
     setNotification('🎉 Claimed 100 Daily Check-in Coins!');
+    Analytics.dailyRewardClaimed(nextCoins);
     
     confetti({
       particleCount: 80,
@@ -185,6 +233,7 @@ export default function App() {
     const nextCoins = coins + reward;
     setCoins(nextCoins);
     setNotification(`🎉 Earned ${reward} coins completely free!`);
+    Analytics.taskClaimed(taskId, reward);
     
     confetti({
       particleCount: 60,
@@ -270,7 +319,9 @@ export default function App() {
     return (
       <div className="app-container">
         <main className="app-content" style={{ display: 'flex', flexDirection: 'column', justify: 'center' }}>
-          <Login onLoginSuccess={() => setIsLoggedIn(true)} />
+          <Suspense fallback={<Spinner />}>
+            <Login onLoginSuccess={() => setIsLoggedIn(true)} />
+          </Suspense>
         </main>
       </div>
     );
@@ -332,6 +383,7 @@ export default function App() {
       <main className="app-content">
         
         {/* Active game view overrides active voice room */}
+        <Suspense fallback={<Spinner />}>
         {activeGamePartner ? (
           <Games 
             partner={activeGamePartner} 
@@ -376,12 +428,17 @@ export default function App() {
                       borderRadius: '50%', 
                       background: 'linear-gradient(45deg, var(--primary), var(--secondary))', 
                       padding: '2px',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      flexShrink: 0
                     }}
                     onClick={() => setActiveTab('profile')}
                   >
-                    <div className="rj-avatar" style={{ background: '#190e25' }}>
-                      {renderAvatarSVG(userProfile.skin, userProfile.hair, userProfile.accessory, userProfile.outfit)}
+                    <div className="rj-avatar" style={{ background: '#190e25', borderRadius: '50%', overflow: 'hidden', width: '100%', height: '100%' }}>
+                      {userProfile.photoURL ? (
+                        <img src={userProfile.photoURL} alt={userProfile.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+                      ) : (
+                        renderAvatarSVG(userProfile.skin, userProfile.hair, userProfile.accessory, userProfile.outfit)
+                      )}
                     </div>
                   </div>
                   <div style={{ flex: 1 }}>
@@ -531,7 +588,7 @@ export default function App() {
             )}
 
             {activeTab === 'matchmaker' && (
-              <Matchmaker userProfile={userProfile} />
+              <Matchmaker userProfile={userProfile} onMatchStarted={() => Analytics.matchStarted(userProfile.lang)} />
             )}
 
             {activeTab === 'loveskool' && (
@@ -541,8 +598,13 @@ export default function App() {
             {activeTab === 'profile' && (
               <AvatarCreator userProfile={userProfile} onSaveProfile={handleSaveProfile} />
             )}
+
+            {activeTab === 'friends' && (
+              <Friends userProfile={userProfile} />
+            )}
           </>
         )}
+        </Suspense>
 
       </main>
 
@@ -561,9 +623,9 @@ export default function App() {
             <Phone size={20} />
             <span>Match</span>
           </div>
-          <div onClick={() => setActiveTab('loveskool')} className={`nav-item ${activeTab === 'loveskool' ? 'active' : ''}`}>
-            <BookOpen size={20} />
-            <span>LoveSkool</span>
+          <div onClick={() => setActiveTab('friends')} className={`nav-item ${activeTab === 'friends' ? 'active' : ''}`}>
+            <Heart size={20} />
+            <span>Friends</span>
           </div>
           <div onClick={() => setActiveTab('profile')} className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`}>
             <User size={20} />
@@ -737,6 +799,32 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+      {/* ── Push Notification Permission Prompt ── */}
+      {showNotifPrompt && 'Notification' in window && Notification.permission === 'default' && (
+        <>
+          <div className="bottom-sheet-overlay" onClick={() => setShowNotifPrompt(false)} />
+          <div className="bottom-sheet open">
+            <div className="bottom-sheet-handle" />
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <div style={{ background: 'rgba(255,46,147,0.1)', width: '56px', height: '56px', borderRadius: '50%', margin: '0 auto 12px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid rgba(255,46,147,0.3)' }}>
+                <Bell size={26} color="var(--primary)" />
+              </div>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '6px' }}>🔔 Stay in the Loop!</h3>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                Get notified when your favourite hosts go live, someone matches with you, or you receive a gift!
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button onClick={handleEnableNotifications} className="frnd-btn" style={{ width: '100%', padding: '14px' }}>
+                🔔 Enable Notifications
+              </button>
+              <button onClick={() => setShowNotifPrompt(false)} className="frnd-btn-secondary" style={{ width: '100%', padding: '12px', borderRadius: '14px' }}>
+                Maybe Later
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
     </div>

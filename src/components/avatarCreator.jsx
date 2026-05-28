@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { AVATAR_ELEMENTS, renderAvatarSVG } from './mockData';
-import { Sparkles, Save, User, Check, RefreshCw } from 'lucide-react';
+import { Sparkles, Save, Check, RefreshCw, Camera, Upload, X } from 'lucide-react';
+import { storage, auth } from '../firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { Analytics } from '../analytics';
 
 export default function AvatarCreator({ userProfile, onSaveProfile }) {
   const [skin, setSkin] = useState(userProfile.skin || AVATAR_ELEMENTS.skin[0].value);
@@ -13,32 +16,68 @@ export default function AvatarCreator({ userProfile, onSaveProfile }) {
   const [lang, setLang] = useState(userProfile.lang || 'Hindi');
   const [bio, setBio] = useState(userProfile.bio || 'Happy to chat and make friends! ✨');
   
+  // Photo upload states
+  const [photoURL, setPhotoURL] = useState(userProfile.photoURL || null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef(null);
+
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   const randomize = () => {
-    const randomSkin = AVATAR_ELEMENTS.skin[Math.floor(Math.random() * AVATAR_ELEMENTS.skin.length)].value;
-    const randomHair = AVATAR_ELEMENTS.hair[Math.floor(Math.random() * AVATAR_ELEMENTS.hair.length)].value;
-    const randomAccessory = AVATAR_ELEMENTS.accessories[Math.floor(Math.random() * AVATAR_ELEMENTS.accessories.length)].value;
-    const randomOutfit = AVATAR_ELEMENTS.outfit[Math.floor(Math.random() * AVATAR_ELEMENTS.outfit.length)].value;
-    
-    setSkin(randomSkin);
-    setHair(randomHair);
-    setAccessory(randomAccessory);
-    setOutfit(randomOutfit);
+    setSkin(AVATAR_ELEMENTS.skin[Math.floor(Math.random() * AVATAR_ELEMENTS.skin.length)].value);
+    setHair(AVATAR_ELEMENTS.hair[Math.floor(Math.random() * AVATAR_ELEMENTS.hair.length)].value);
+    setAccessory(AVATAR_ELEMENTS.accessories[Math.floor(Math.random() * AVATAR_ELEMENTS.accessories.length)].value);
+    setOutfit(AVATAR_ELEMENTS.outfit[Math.floor(Math.random() * AVATAR_ELEMENTS.outfit.length)].value);
+  };
+
+  const handlePhotoSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate: must be image, max 5MB
+    if (!file.type.startsWith('image/')) {
+      setUploadError('Please select an image file (JPG, PNG, etc.)');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadError('Photo must be smaller than 5MB');
+      return;
+    }
+
+    setUploadError('');
+    setUploading(true);
+
+    try {
+      const currentUser = auth.currentUser;
+      const userId = currentUser?.uid || 'guest';
+      const ext = file.name.split('.').pop();
+      const storageRef = ref(storage, `avatars/${userId}/profile.${ext}`);
+      
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      setPhotoURL(downloadURL);
+      Analytics.photoUploaded();
+    } catch (err) {
+      console.warn('Photo upload failed:', err);
+      setUploadError('Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+      // Reset file input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoURL(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleSave = (e) => {
     e.preventDefault();
-    onSaveProfile({
-      name,
-      age: parseInt(age),
-      lang,
-      bio,
-      skin,
-      hair,
-      accessory,
-      outfit
-    });
+    const newProfile = { name, age: parseInt(age), lang, bio, skin, hair, accessory, outfit, photoURL };
+    onSaveProfile(newProfile);
+    Analytics.profileSaved(!!photoURL);
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
   };
@@ -49,9 +88,96 @@ export default function AvatarCreator({ userProfile, onSaveProfile }) {
         <h2 style={{ fontSize: '20px', fontWeight: '800', background: 'linear-gradient(90deg, #ff2e93, #8b3cff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '4px' }}>
           Create Anonymous Avatar
         </h2>
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No real pictures needed. Stay private & secure!</p>
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No real pictures needed. Stay private &amp; secure!</p>
       </div>
 
+      {/* Profile Photo Section */}
+      <div style={{ width: '100%', background: 'var(--glass-bg)', border: '1px solid var(--glass-border)', borderRadius: '20px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600', alignSelf: 'flex-start' }}>
+          <Camera size={13} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+          Optional Profile Photo
+        </p>
+        
+        <div style={{ position: 'relative' }}>
+          {/* Photo preview / avatar preview */}
+          <div style={{
+            width: '80px', height: '80px', borderRadius: '50%',
+            background: 'linear-gradient(45deg, var(--primary), var(--secondary))',
+            padding: '2px', cursor: 'pointer'
+          }} onClick={() => !photoURL && fileInputRef.current?.click()}>
+            <div style={{
+              width: '100%', height: '100%', borderRadius: '50%',
+              background: '#190e25', overflow: 'hidden',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              {photoURL ? (
+                <img src={photoURL} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                renderAvatarSVG(skin, hair, accessory, outfit)
+              )}
+            </div>
+          </div>
+          
+          {/* Remove photo button */}
+          {photoURL && (
+            <button
+              type="button"
+              onClick={handleRemovePhoto}
+              style={{
+                position: 'absolute', top: '-4px', right: '-4px',
+                width: '22px', height: '22px', borderRadius: '50%',
+                background: '#e53935', border: '2px solid #0e0818',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}
+            >
+              <X size={12} color="#fff" />
+            </button>
+          )}
+        </div>
+
+        {/* Upload button */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="frnd-btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '12px', fontSize: '12px', opacity: uploading ? 0.6 : 1 }}
+          >
+            {uploading ? (
+              <>
+                <div style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Upload size={14} />
+                {photoURL ? 'Change Photo' : 'Upload Photo'}
+              </>
+            )}
+          </button>
+        </div>
+        
+        {uploadError && (
+          <p style={{ fontSize: '12px', color: '#e53935', textAlign: 'center' }}>{uploadError}</p>
+        )}
+        
+        <p style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center' }}>
+          JPG / PNG · Max 5MB · Shown in rooms &amp; your profile
+        </p>
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="user"
+          style={{ display: 'none' }}
+          onChange={handlePhotoSelect}
+        />
+      </div>
+
+      {/* Avatar preview + randomize */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '20px', width: '100%', justifyContent: 'center', margin: '8px 0' }}>
         <div className="avatar-preview-container">
           <div className="avatar-preview-inner">
@@ -60,6 +186,7 @@ export default function AvatarCreator({ userProfile, onSaveProfile }) {
         </div>
         
         <button 
+          type="button"
           onClick={randomize}
           className="frnd-btn-secondary"
           style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', borderRadius: '12px' }}
@@ -111,14 +238,9 @@ export default function AvatarCreator({ userProfile, onSaveProfile }) {
                   className={`avatar-option-dot ${accessory === item.value ? 'active' : ''}`}
                   style={{ 
                     background: item.value === 'none' ? 'rgba(255,255,255,0.1)' : 'var(--primary)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justify: 'center',
-                    fontSize: '9px',
-                    fontWeight: '700',
-                    color: '#fff',
-                    textAlign: 'center',
-                    lineHeight: '24px'
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '9px', fontWeight: '700', color: '#fff',
+                    textAlign: 'center', lineHeight: '24px'
                   }}
                   onClick={() => setAccessory(item.value)}
                   title={item.name}
@@ -180,21 +302,21 @@ export default function AvatarCreator({ userProfile, onSaveProfile }) {
                 value={lang}
                 onChange={(e) => setLang(e.target.value)}
               >
-                <option value="Hindi, English">🇮🇳 Hindi & English</option>
-                <option value="Tamil, English">Tamil & English</option>
-                <option value="Telugu, Hindi">Telugu & Hindi</option>
-                <option value="Punjabi, Hindi">Punjabi & Hindi</option>
-                <option value="Marathi, Hindi">Marathi & Hindi</option>
-                <option value="Bengali, Hindi">Bengali & Hindi</option>
-                <option value="Gujarati, Hindi">Gujarati & Hindi</option>
-                <option value="Malayalam, English">Malayalam & English</option>
-                <option value="Kannada, English">Kannada & English</option>
-                <option value="Odia, Hindi">Odia & Hindi</option>
-                <option value="Bhojpuri, Hindi">Bhojpuri & Hindi</option>
-                <option value="Rajasthani, Hindi">Rajasthani & Hindi</option>
-                <option value="Haryanvi, Hindi">Haryanvi & Hindi</option>
-                <option value="Urdu, Hindi">Urdu & Hindi</option>
-                <option value="Assamese, Hindi">Assamese & Hindi</option>
+                <option value="Hindi, English">🇮🇳 Hindi &amp; English</option>
+                <option value="Tamil, English">Tamil &amp; English</option>
+                <option value="Telugu, Hindi">Telugu &amp; Hindi</option>
+                <option value="Punjabi, Hindi">Punjabi &amp; Hindi</option>
+                <option value="Marathi, Hindi">Marathi &amp; Hindi</option>
+                <option value="Bengali, Hindi">Bengali &amp; Hindi</option>
+                <option value="Gujarati, Hindi">Gujarati &amp; Hindi</option>
+                <option value="Malayalam, English">Malayalam &amp; English</option>
+                <option value="Kannada, English">Kannada &amp; English</option>
+                <option value="Odia, Hindi">Odia &amp; Hindi</option>
+                <option value="Bhojpuri, Hindi">Bhojpuri &amp; Hindi</option>
+                <option value="Rajasthani, Hindi">Rajasthani &amp; Hindi</option>
+                <option value="Haryanvi, Hindi">Haryanvi &amp; Hindi</option>
+                <option value="Urdu, Hindi">Urdu &amp; Hindi</option>
+                <option value="Assamese, Hindi">Assamese &amp; Hindi</option>
               </select>
             </div>
           </div>
@@ -215,15 +337,12 @@ export default function AvatarCreator({ userProfile, onSaveProfile }) {
           type="submit" 
           className="frnd-btn"
           style={{ width: '100%', padding: '16px' }}
+          disabled={uploading}
         >
           {savedSuccess ? (
-            <>
-              <Check size={18} /> Profile Saved!
-            </>
+            <><Check size={18} /> Profile Saved!</>
           ) : (
-            <>
-              <Save size={18} /> Save Avatar Profile
-            </>
+            <><Save size={18} /> Save Avatar Profile</>
           )}
         </button>
       </form>

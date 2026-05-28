@@ -1,0 +1,37 @@
+{
+  "name": "AuraVoice — Live Audio Match & Chat",
+  "short_name": "AuraVoice",
+  "description": "Live voice rooms, anonymous matchmaking, and audio dating — just like Frnd.app",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e0818",
+  "theme_color": "#ff2e93",
+  "lang": "en-IN",
+  "categories": ["social", "entertainment", "lifestyle"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Voice Rooms",
+      "short_name": "Rooms",
+      "description": "Join a live voice room",
+      "url": "/?tab=rooms",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Quick Match",
+      "short_name": "Match",
+      "description": "Instant anonymous voice match",
+      "url": "/?tab=matchmaker",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    }
+  ]
+}
