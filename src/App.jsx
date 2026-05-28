@@ -34,7 +34,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [showNotifPrompt, setShowNotifPrompt] = useState(false);
   // Video call state
-  const [activeVideoCall, setActiveVideoCall] = useState(null); // { chatId, peerName, peerPhoto, peerUid }
+  const [activeVideoCall, setActiveVideoCall] = useState(null);
+  // DM deep-link: when user taps Message in Friends tab, open that thread directly
+  const [pendingDMThread, setPendingDMThread] = useState(null);
   
   // Real Firestore synced states
   const [coins, setCoins] = useState(100);
@@ -606,12 +608,21 @@ export default function App() {
             )}
 
             {activeTab === 'friends' && (
-              <Friends userProfile={userProfile} />
+              <Friends
+                userProfile={userProfile}
+                onOpenDM={(thread) => {
+                  setPendingDMThread(thread);
+                  setActiveTab('messages');
+                }}
+                onStartVideoCall={(peer) => setActiveVideoCall(peer)}
+              />
             )}
 
             {activeTab === 'messages' && (
               <DirectMessages
                 userProfile={userProfile}
+                initialThread={pendingDMThread}
+                onThreadOpened={() => setPendingDMThread(null)}
                 onStartVideoCall={(peer) => setActiveVideoCall(peer)}
               />
             )}
@@ -789,6 +800,19 @@ export default function App() {
                   setActiveTab('rooms');
                   setActiveRoom({ id: docRef.id, ...roomData });
                   confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+                  // ── Track roomsHosted for Leaderboard ──────────────────────
+                  const currentUser = auth.currentUser;
+                  if (currentUser) {
+                    try {
+                      const uRef = doc(db, 'users', currentUser.uid);
+                      const uSnap = await getDoc(uRef);
+                      if (uSnap.exists()) {
+                        await updateDoc(uRef, {
+                          'profile.roomsHosted': (uSnap.data()?.profile?.roomsHosted || 0) + 1,
+                        });
+                      }
+                    } catch (_) {}
+                  }
                 } catch (err) {
                   console.warn('Room create failed on database, using local fallback:', err);
                   const tempId = `local-${Date.now()}`;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { joinVoiceChannel, leaveVoiceChannel, setLocalMicMute } from '../agora';
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, setDoc, deleteDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { Mic, MicOff, Users, Send, Gift, Flag, UserX, UserPlus, UserCheck } from 'lucide-react';
 import { renderAvatarSVG } from './mockData';
 import confetti from 'canvas-confetti';
@@ -174,6 +174,22 @@ export default function VoiceRoom({ room, userProfile, coins, setCoins, onBack, 
     }
     setCoins(prev => prev - selectedGift.cost);
     setGiftDrawerOpen(false);
+
+    // ── Track coinsSpent in Firestore for Leaderboard ───────────────────────
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      try {
+        const userRef = doc(db, 'users', currentUser.uid);
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+          const prev = snap.data()?.profile?.coinsSpent || 0;
+          await updateDoc(userRef, {
+            'profile.coinsSpent': prev + selectedGift.cost,
+            'profile.coins': (snap.data()?.profile?.coins || 0) - selectedGift.cost,
+          });
+        }
+      } catch (e) { /* non-critical, leaderboard is eventually consistent */ }
+    }
 
     const scalar = 3;
     const shape = confetti.shapeFromText({ text: selectedGift.emoji, scalar });

@@ -26,8 +26,8 @@ import { Send, MessageCircle, ArrowLeft, Video } from 'lucide-react';
 // Helper: deterministic chat ID from two UIDs
 const chatId = (a, b) => [a, b].sort().join('_');
 
-export default function DirectMessages({ userProfile, onStartVideoCall }) {
-  const [view, setView]           = useState('list'); // 'list' | 'thread'
+export default function DirectMessages({ userProfile, onStartVideoCall, initialThread, onThreadOpened }) {
+  const [view, setView]             = useState('list'); // 'list' | 'thread'
   const [activeChat, setActiveChat] = useState(null); // { chatId, peerName, peerPhoto, peerProfile }
   const [chats, setChats]         = useState([]);
   const [messages, setMessages]   = useState([]);
@@ -36,6 +36,16 @@ export default function DirectMessages({ userProfile, onStartVideoCall }) {
   const chatEndRef = useRef(null);
 
   const currentUser = auth.currentUser;
+
+  // Auto-open thread if deep-linked from Friends tab
+  useEffect(() => {
+    if (initialThread && initialThread.chatId) {
+      setActiveChat(initialThread);
+      setView('thread');
+      setMessages([]);
+      onThreadOpened?.();
+    }
+  }, [initialThread]);
 
   // ── Listen to all my chats ──────────────────────────────────────────────────
   useEffect(() => {
